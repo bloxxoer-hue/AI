@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>video generator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>video<span>generator</span></h1>
+    <p class="sub">видео и фото на четырёх движках</p>
+  </header>
+
+  <nav id="modes">
+    <button class="mode active" data-mode="minimax">
+      <b>01</b> Minimax H3
+      <small>текст→видео · фото→видео · до 8с</small>
+    </button>
+    <button class="mode" data-mode="kling">
+      <b>02</b> Kling 2.1
+      <small>текст→видео · до 5с</small>
+    </button>
+    <button class="mode" data-mode="photo">
+      <b>03</b> Фото
+      <small>gpt-image 2 · nano banana</small>
+    </button>
+    <button class="mode" data-mode="slice">
+      <b>04</b> TikTok / Shorts
+      <small>slice.video · 15 сек</small>
+    </button>
+  </nav>
+
+  <main>
+    <!-- MINIMAX -->
+    <section class="panel active" id="panel-minimax">
+      <label>промпт
+        <textarea id="mx-prompt" rows="4" placeholder="опиши сцену..."></textarea>
+      </label>
+      <div class="row">
+        <label class="grow"><span>дурэйшн: <b id="mx-dur-val">6</b> сек</span>
+          <input type="range" id="mx-duration" min="1" max="8" value="6" />
+        </label>
+        <label>соотношение сторон
+          <select id="mx-aspect">
+            <option value="16:9">16:9</option>
+            <option value="9:16">9:16</option>
+            <option value="1:1">1:1</option>
+          </select>
+        </label>
+      </div>
+      <label class="file">фото (необязательно — без фото будет text-to-video)
+        <input type="file" id="mx-image" accept="image/*" />
+        <span class="file-name">файл не выбран</span>
+      </label>
+    </section>
+
+    <!-- KLING -->
+    <section class="panel" id="panel-kling">
+      <label>промпт
+        <textarea id="kl-prompt" rows="4" placeholder="опиши сцену..."></textarea>
+      </label>
+      <label class="grow"><span>дурэйшн: <b id="kl-dur-val">5</b> сек</span>
+        <input type="range" id="kl-duration" min="1" max="5" value="5" />
+      </label>
+      <p class="note">режим только text-to-video, без фото</p>
+    </section>
+
+    <!-- PHOTO -->
+    <section class="panel" id="panel-photo">
+      <label>промпт
+        <textarea id="ph-prompt" rows="4" placeholder="опиши фото..."></textarea>
+      </label>
+      <label>фото-модель
+        <select id="ph-model">
+          <option value="gpt-image-2">GPT Image 2</option>
+          <option value="nano-banana">Nano Banana</option>
+        </select>
+      </label>
+      <label class="file">фото-референс (необязательно)
+        <input type="file" id="ph-image" accept="image/*" />
+        <span class="file-name">файл не выбран</span>
+      </label>
+    </section>
+
+    <!-- SLICE -->
+    <section class="panel" id="panel-slice">
+      <label>What's your video about?
+        <textarea id="sl-topic" rows="3" placeholder="напр. Three surprising facts about octopuses that sound fake but are true"></textarea>
+      </label>
+
+      <fieldset>
+        <legend>Visuals</legend>
+        <label class="radio"><input type="radio" name="sl-visuals" value="animated" checked /> Animated video — каждая сцена движется</label>
+        <label class="radio"><input type="radio" name="sl-visuals" value="still" /> Still images — мягкий pan &amp; zoom</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Who speaks</legend>
+        <label class="radio"><input type="radio" name="sl-speaker" value="narrator" checked /> A narrator — один голос</label>
+        <label class="radio"><input type="radio" name="sl-speaker" value="characters" /> The characters — каждый говорит своим голосом</label>
+      </fieldset>
+
+      <div class="row">
+        <label>Length
+          <select id="sl-length">
+            <option value="15s" selected>~15s · ~160 credits</option>
+          </select>
+        </label>
+        <label>Visual style
+          <select id="sl-style">
+            <option value="Auto">✨ Auto</option>
+            <option value="Photoreal">Photoreal</option>
+            <option value="Cinematic">Cinematic</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="row">
+        <label class="grow">Voiceover
+          <input type="text" id="sl-voiceover" placeholder="голос по умолчанию (или своё описание)" />
+        </label>
+        <label class="check"><input type="checkbox" id="sl-captions" checked /> Captions</label>
+      </div>
+      <p class="note">slice.video: аккаунт создаётся при каждом запросе, триал (200 ◆) приходит с задержкой — сервер сам ждёт баланс. на триале доступны still images и нарратор (animated и персонажи — с credit pack), всегда 15 сек</p>
+    </section>
+
+    <button id="generate">сгенерировать</button>
+
+    <div id="status" hidden>
+      <div class="bar"><i></i></div>
+      <p id="status-text"></p>
+    </div>
+
+    <div id="result" hidden>
+      <video id="result-video" controls loop></video>
+      <img id="result-image" alt="результат" />
+      <div id="result-slice" class="slice-box" hidden>
+        <pre id="slice-text"></pre>
+        <a id="slice-open" href="https://slice.video" target="_blank" rel="noopener">открыть slice.video</a>
+      </div>
+      <a id="download" class="download" download>скачать</a>
+    </div>
+
+    <section id="accounts">
+      <h2>аккаунты</h2>
+      <p class="note">каждый запрос идёт с нового аккаунта: браузер сам берёт temp-почту (temp-mail.io), регистрируется, генерирует и закрывает сессию</p>
+      <div id="accounts-list"></div>
+    </section>
+
+    <section id="history">
+      <h2>история</h2>
+      <div id="history-list"><p class="empty">пока пусто</p></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

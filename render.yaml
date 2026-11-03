@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: video-generator-py
+    runtime: docker
+    plan: starter
+    rootDir: video-generator-py
+    envVars:
+      - key: HEADLESS
+        value: "1"
+    healthCheckPath: /

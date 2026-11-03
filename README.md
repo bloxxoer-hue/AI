@@ -1,108 +1,65 @@
-# video-generator-site
+# video-generator-py
 
-Сайт-обёртка для генерации видео и фото на четырёх режимах. Ключи API не нужны —
-сайты обслуживаются браузером (Playwright), который работает как человек: открывает
-страницу, выбирает режим, вписывает промпт, дурэйшн, аспект и фото, жмёт кнопку,
-ждёт результат и скачивает его к себе.
+Python-версия (FastAPI + Playwright). Все четыре режима: MiniMax H3, Kling 2.1,
+AI Photo, TikTok/Shorts — браузер сам регистрирует аккаунты через temp-почту,
+вводит промты, ждёт генерацию и скачивает результат в `outputs/`.
+
+Человек во время генерации ничего не делает — только ждёт готовый файл в интерфейсе.
+
+## Запуск локально (Windows)
+
+```bash
+cd video-generator-py
+python -m venv venv
+venv\Scripts\pip install -r requirements.txt
+venv\Scripts\python -m playwright install chromium
+venv\Scripts\python -m uvicorn app.main:app --port 3100
+```
+
+Открыть `http://localhost:3100`.
+
+## Деплой на Render (Docker — браузеры уже внутри образа)
+
+В `Dockerfile` базовый образ `mcr.microsoft.com/playwright/python` — chromium и
+все системные библиотеки в нём уже есть, поэтому **никаких `playwright install`
+на сборке и никаких ошибок** вида «Executable doesn't exist» / «su: failure».
+
+1. Залей **всю** папку проекта в GitHub (см. корневой README — там список файлов).
+2. Render → **New + → Web Service** → выбери репозиторий.
+3. В форме:
+   - **Root Directory**: `video-generator-py`
+   - **Language / Environment**: **Docker**
+   - Build/Start команды не нужны (их нет у Docker — всё из Dockerfile)
+4. Deploy.
+
+`render.yaml` в этой папке — готовая конфигурация Blueprint (`runtime: docker`,
+`rootDir: video-generator-py`), можно сразу через **New + → Blueprint**.
+
+## Структура
+
+```
+app/main.py         — FastAPI: статика + API (/api/generate/:mode, /api/job/:id)
+app/jobs.py         — очередь: строго одна задача за раз, логи шагов
+app/browser.py      — playwright: потоко-локальные браузеры, живой Chrome если есть
+app/mail.py         — temp-mail.io (любые домены) + emailnator (gmail для slice)
+app/register.py     — авто-регистрация h3 / polyfaced / slice
+app/media.py        — забора результата: трафик mp4/webm, DOM, кнопка Download
+app/sites/          — сценарии генерации по сайтам
+app/pool.py         — пул заранее подготовленных slice-аккаунтов
+app/warmer.py       — фон готовит аккаунты slice (регистрация + триал)
+public/             — интерфейс (тот же, что у node-версии)
+outputs/            — готовые видео/фото
+```
 
 ## Режимы
 
-1. **Minimax H3** — h3-max.me. prompt, дурэйшн (5–8 сек — сайт сам даёт от 5),
-   соотношение сторон, поле для фото. Без фото — text-to-video, с фото — image-to-video.
-2. **Kling 2.1** — polyfaced.com/studio/video. prompt, дурэйшн до 5 сек, только текст→видео.
-3. **Фото** — polyfaced.com/studio/image. выбор модели GPT Image 2 / Nano Banana,
-   фото-референс через вкладку Image to Image.
-4. **TikTok / Shorts** — slice.video. тема, Animated/Still, narrator/characters,
-   15 сек, captions, стиль (Auto/Photoreal/Cinematic) — всё проставляется само.
+| Режим | Сайт | Длительность | Почта |
+|---|---|---|---|
+| MiniMax H3 | h3-max.me | 5–8 сек | temp-mail → emailnator (фолбэк) |
+| Kling 2.1 | polyfaced.com | 1–5 сек | temp-mail |
+| Фото | polyfaced.com | — | temp-mail, GPT Image 2 / Nano Banana |
+| TikTok/Shorts | slice.video | 15 сек (trial) | emailnator (gmail) — slice блокирует temp-домены |
 
-Если в `.env` лежат ключи API — режимы сами уходят на официальные API вместо браузера.
-
-## Авторегистрация (temp-почта)
-
-Ручной вход не нужен. Каждый запрос стартует со **свежего браузерного контекста**
-(нулевой набор кук) — под него создаётся новый аккаунт:
-
-1. `rpa/mail.js` — два провайдера с авто-откатом:
-   **temp-mail.io** (домены любые, ротация кнопкой «random») — для h3-max и
-   polyfaced; **emailnator.com** с выбором gmail-домена (чипы `+Gmail`/`.Gmail`) —
-   для slice.video, потому что slice блокирует явно-временные домены
-   («Email is a temporary inbox»), а h3 отвергает часть из них с `400 Invalid email`.
-   Письма читаются автоматически: 6-значный код — прямо в теме письма,
-   verify-ссылка — в body письма (включая iframe), inbox обновляется по Refresh.
-2. `rpa/register.js` регистрирует сервис: h3-max (письмо Confirm email →
-   verify-ссылка → автологин), polyfaced (форма /sign-up, без подтверждения),
-   slice (6-значный код из письма → дашборд).
-3. Куки сохраняются в `rpa/state/` как **запасной** путь: если авто-регистрация
-   не пройдёт, запрос уйдёт через ранее сохранённый вход, а не встанет.
-
-Задачи выполняются строго по очереди — параллельные регистрации мешают друг другу.
-
-### Нюанс slice.video
-
-- свежий аккаунт стартует с **◆ 0** — триал (200 ◆) по докам «выдаётся сразу»,
-  но фактически на части аккаунтов не приходит: провайдер поллит баланс до
-  10 минут, фоновый warmer (`rpa/warmer.js`) держит запас аккаунтов с кредитами
-- триал хватает на **один ролик** (~164 ◆ списывается за 15s still images);
-  animated video и персонажи на триале залочены (нужен paid credit pack)
-- форма создаётся на прямом URL `/videos/new` (Rails-поля: `#video_prompt`,
-  `#video_target_duration_s`, `video[motion]`, `video[style_preset]`,
-  кнопка `#generate-slice-btn`), результат — 302 на `/videos/<id>`
-
-## Запуск
-
-```bash
-cd video-generator-site
-npm install
-npx playwright install chromium   # один раз, качает браузер
-npm start
-```
-
-Открыть `http://localhost:3000`.
-
-## Деплой на Render
-
-В папке уже лежит `render.yaml` (Blueprint) — соберёт всё сам:
-
-1. **GitHub:** создай приватный репозиторий → в его веб-интерфейсе
-   **Add file → Upload files** → зальи содержимое папки `video-generator-site`
-   (кроме `node_modules` — `.gitignore` это отфильтрует) → **Commit**.
-2. **Render:** render.com → **New + → Blueprint** → подключи репозиторий →
-   Render прочитает `render.yaml` → **Apply**. Build качает chromium с системными
-   зависимостями, старт — `npm start`, порт берётся из `PORT` окружения.
-3. Через пару минут выдаёт ссылку `https://video-generator-site-xxxx.onrender.com` —
-   открывай и генерируй. На первом запросе каждый сервис зарегистрируется сам.
-
-нюансы:
-- `HEADLESS=1` уже прописан — без него хром на сервере не поднимется
-- ролики в `outputs/` эфемерны — качай сразу после готовности (или раскомментируй
-  диск в `render.yaml` для постоянного хранения)
-- пока страница открыта и поллит задачи — сервис не засыпает; закрыл вкладку на
-  долгой генерации — включи платный план (Starter), иначе Render может усыпить
-  сервис в момент рендера
-- `rpa/state/` (куки аккаунтов) в git не попадает — на сервере создаётся чистым
-
-## Как это работает
-
-- фронт шлёт `POST /api/generate/:mode` → сервер создаёт job → фронт поллит
-  `/api/job/:id`, показывая живой прогресс («вписываем промпт…», «ждём результат…»).
-- `rpa/sites/*.js` — сценарии по сайтам: детерминированные селекторы
-  (`#prompt`, `select[name=duration]`, `#aspect-ratio`, кнопки `Generate · N credits`),
-  проверка входа, повтор клика, если вылезла стена авторизации.
-- `rpa/human.js` — человеческий темп: паузы перед кликом, набор с рандомной скоростью.
-- `rpa/media.js` — забирает результат: сетевой трафик (mp4/webm), DOM после клика,
-  кнопка Download; blob-видео выгружается из страницы. Всё падает в `outputs/`.
-- результат виден в интерфейсе с кнопкой «скачать» и в истории внизу страницы.
-
-## API-ключи (необязательно)
-
-| Переменная | Режим |
-|---|---|
-| `MINIMAX_API_KEY` (+`MINIMAX_GROUP_ID`) | 1 напрямую в MiniMax |
-| `KLING_ACCESS_KEY` / `KLING_SECRET_KEY` | 2 напрямую в Kling |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` | 3 напрямую в OpenAI/Gemini |
-
-## Точки расширения
-
-Селекторы сайтов лежат в `rpa/sites/*.js` — если один из сайтов поменяет
-вёрстку, правится один файл. Статус входов: `GET /api/sites`,
-открыть окно входа: `POST /api/sites/:id/login`.
+Нюанс slice: свежий аккаунт стартует с ◆0 — триал (200 ◆) приходит не всегда,
+поэтому warmer в фоне держит запас аккаунтов с кредитами: запрос генерации берёт
+готовый с полки и ждёт только рендер.
