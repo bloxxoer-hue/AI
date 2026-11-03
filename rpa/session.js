@@ -1,11 +1,11 @@
 // patchright — playwright без его следов (CDP-сигнатуры, аргументы запуска):
-// slice молча не даёт триал «подозрительным» клиентам, ручной проход — даёт
-let chromium;
-try {
-  ({ chromium } = await import("patchright"));
-} catch {
-  ({ chromium } = await import("playwright"));
-}
+// slice молча не даёт триал «подозрительным» клиентам, ручной проход — даёт.
+// на сервере patchright-браузера может не быть — есть откат на обычный playwright
+let primary = null;
+let fallback = null;
+try { primary = (await import("patchright")).chromium; } catch {}
+try { fallback = (await import("playwright")).chromium; } catch {}
+if (!primary && !fallback) throw new Error("playwright не установлен — выполни: npm install");
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,28 +25,30 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 async function ensureBrowser() {
   if (browser) return browser;
-  const opts = {
-    headless: process.env.HEADLESS === "1",
-    args: [
-      "--disable-blink-features=AutomationControlled",
-      "--no-first-run",
-      "--no-default-browser-check",
-    ],
-  };
-  try {
-    browser = await chromium.launch({ ...opts, channel: "chrome" });
-  } catch {
-    try {
-      browser = await chromium.launch(opts);
-    } catch (err) {
-      throw new Error(
-        /executable|browser/i.test(err.message)
-          ? "браузер не установлен — выполни: npx playwright install chromium (или поставь Google Chrome)"
-          : err.message
-      );
+
+  // linux (сервер) — всегда headless: дисплея нет, а переменная может быть не задана
+  const headless = process.env.HEADLESS === "1" || process.platform === "linux";
+  const args = [
+    "--disable-blink-features=AutomationControlled",
+    "--no-first-run",
+    "--no-default-browser-check",
+  ];
+
+  const errors = [];
+  for (const mod of [primary, fallback].filter(Boolean)) {
+    for (const opts of [{ channel: "chrome" }, {}]) {
+      try {
+        browser = await mod.launch({ ...opts, headless, args });
+        return browser;
+      } catch (e) {
+        errors.push(e.message.split("\n")[0].slice(0, 160));
+      }
     }
   }
-  return browser;
+  throw new Error(
+    "браузер не установлен — выполни: npx playwright install chromium (или поставь Google Chrome). Причина: "
+      + (errors[errors.length - 1] || "нет деталей")
+  );
 }
 
 async function makeContext(storageState) {

@@ -29,7 +29,7 @@ const jobs = new Map();
 
 function createJob(mode) {
   const id = crypto.randomUUID();
-  const job = { id, mode, status: "running", progress: "запуск...", result: null, error: null };
+  const job = { id, mode, status: "running", progress: "запуск...", result: null, error: null, logs: [] };
   jobs.set(id, job);
   if (jobs.size > 200) jobs.delete(jobs.keys().next().value);
   return job;
@@ -71,7 +71,12 @@ app.post("/api/generate/:mode", (req, res) => {
   const mode = req.params.mode;
   const body = req.body || {};
   const job = createJob(mode);
-  const p = (msg) => (job.progress = msg);
+  const p = (msg) => {
+    job.progress = msg;
+    const stamp = `[${new Date().toLocaleTimeString("ru-RU")}] ${msg}`;
+    job.logs.push(stamp);
+    console.log(`job ${job.id.slice(0, 8)} ${stamp}`);
+  };
 
   if (mode === "minimax") {
     if (!body.prompt?.trim()) return res.status(400).json({ error: "нет промта" });
@@ -159,6 +164,7 @@ app.get("/api/job/:id", (req, res) => {
     progress: job.progress,
     result: job.result,
     error: job.error,
+    logs: job.logs,
   });
 });
 
